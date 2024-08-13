@@ -9,7 +9,7 @@
 
 %% If there are structures, then load
     if isfield(filename,'structures')
-        load(filename.structures);         % Load structires
+        load(filename.structures);         % Load structures
         model.structures=1;
         for i =1:structures(1).Nstruct
             structures(i).xo=mean(structures(i).x);
@@ -33,7 +33,7 @@
      model.Ns=length(shoreline.x);
     [model]=find_segments(shoreline.Xhead,0,model);
 
-%% Seperate mobile beach from non-mobile coast. NB Also boundary length-sclales L
+%% Seperate mobile beach from non-mobile coast. 
     [model]=getBeach(shoreline,model);
     [model,hard]=getNonMobile(shoreline,model);
 
@@ -180,7 +180,7 @@ end
         KF.used=0;
     end  
 
-% Compute shadows lookup table for speed
+% Compute shadows lookup table for speed % Not recommended
     if isfield(model,'shadowSwitch')
         shadowSwitch=model.shadowSwitch;
     else
@@ -232,8 +232,7 @@ while date(k)<=startDate+(nYears*365.25)
     XsurfNow=model.Xsurf; % gets the instantaneous surfzone width at the current time-step (used for tansmission calcs)
    % dc=model.dc; % Commented to keep constant in time
 
-% Compute shadows on the basis of the non-shoaled wave direction (this
-% is slow and might be better in form of look-up table)
+% Compute shadows on the basis of the non-shoaled wave direction
     % Initialise arays
        model.shadow=ones(size(model.x));
        shadow=ones(size(model.x));
@@ -267,7 +266,7 @@ while date(k)<=startDate+(nYears*365.25)
         end
     end
 
-% Find waves approaching at more than 90 degrees
+% Find waves approaching at more than 90 degrees. NB High angle waves upto 90 degrees are ok.
     j=find(abs(DirArray)>=90);Ps(j)=0;Po(j)=0;  
 
 % longshore flux
@@ -308,7 +307,7 @@ while date(k)<=startDate+(nYears*365.25)
         end 
         S=S(:);
 
-% Boundary Flux (dictated by updrift conditions)%%%%%%%%%%%%
+% Boundary Flux %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
        [TrCoeff1,Leffective1]=calcTransmission(model.L(1),XsurfNow(1),model.dn(1),model);
         qlhb=TrCoeff1*model.qs(2);
        [TrCoeff2,Leffective2]=calcTransmission(model.L(2),XsurfNow(end),model.dn(end),model); 
@@ -329,7 +328,7 @@ while date(k)<=startDate+(nYears*365.25)
 % Compute normal displacementdue due to cross-shore transport
     dnx=dt.*qn./(Xsurf.*dc); % Wave Power diss
 
-% Sea level rise normal diplacement / equilibrium restoring force
+% Sea level rise normal diplacement / equilibrium relaxation model
     timeConstant = (Xsurf.*dc)./(abs(Qo)./Xsurf); % [s]
     model.dnSLR = (dt ./ timeConstant) .* ((SLR0-SLR)./tanb - model.dnSLR); 
 
