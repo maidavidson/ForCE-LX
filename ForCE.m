@@ -276,7 +276,6 @@ while date(k)<=startDate+(nYears*365.25)
     if i==1;dns_ds=zeros(size(model.ns));end
 
     model.Pavs=model.a2.*Dbar.*model.ns + model.b2.*Pav2;
-%         model.Pavs=model.a2.*model.ns + model.b2.*Pav2;
 
     qs = constant.k1.*model.k2.* (Ps-model.Pavs);
     Qo = 0.5*constant.k1.*model.k2.* model.PoMean(:)';
@@ -599,7 +598,6 @@ end % End Kalman Filter (if)
     model.s=nan(size(n));
     [model.s(jj)]=computeAlongshoreDist(x(jj),y(jj));
   %%%%%%%%%%%%%%%%%%%%%%%%%%%%% 
-
 
     %% Plot figure 1 Data 
     if nextPlot<=date(k)
