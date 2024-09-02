@@ -519,7 +519,7 @@ if j1>nCal(tm)
                 state_values = State(l + 2, 2:length(model.date) + 1);
 
 
-                plot(model.date, state_values, 'linewidth', 3, 'color', 'red');
+                plot(model.date, state_values, 'r','linewidth', 3);
                 hold on;
 
                 % Plot evolving average confidence limits
