@@ -31,33 +31,16 @@
 %% Define initial shoreline x and y values
 % re-define model.ds to fit required shoreline length
      model.Ns=length(shoreline.x);
-    [model]=find_segments(shoreline.Xhead,0,model);
 
 %% Seperate mobile beach from non-mobile coast. 
+    model.Nseg=1;
+    model.SegIndex=[1,model.Ns];
     [model]=getBeach(shoreline,model);
-    [model,hard]=getNonMobile(shoreline,model);
-
-%% Make hard coastline string to compute shadows...
-if hard(1).Nseg>1
-        model.x_hard=[];
-        model.y_hard=[];
-        if model.shadowSwitch==1
-        for i=1:hard(1).Nseg
-            hard(i).Ns=length(hard(i).x);
-            [x,y,hard(i).ds,hard(i).Ns]=...
-                initialiseShoreline(hard(i).x,hard(i).y,hard(i).Ns,10);
-            model.x_hard=[model.x_hard,x];
-            model.x_hard=[model.x_hard,NaN];
-            model.y_hard=[model.y_hard,y];
-            model.y_hard=[model.y_hard,NaN];
-            clear x y
-        end
-        end
-end
 
 % Resample shoreline acording to model.ds
     [model.x,model.y,model.dsMod,model.Ns]=initialiseShoreline(model.x,model.y,model.Ns,model.ds);
     model.x0=model.x;model.y0=model.y;
+    [model.s]=computeAlongshoreDist(model.x0,model.y0);
     model.dn=zeros(size(model.x)); % Initialise shoreline normal displacement
     model.nx=model.dn;
     model.ns=model.dn;
@@ -279,7 +262,7 @@ while date(k)<=startDate+(nYears*365.25)
     qs = constant.k1.*model.k2.* (Ps-model.Pavs);
     Qo = 0.5*constant.k1.*model.k2.* model.PoMean(:)';
 
-% Compute dissequilibrium
+% Compute disequilibrium
 % The following is a stream-function between ShoreFor and Yates to be
 % optimsed for a nd b later
      model.Pavn=model.a1.*Dbar.*model.nx + model.b1.*Pav1;
@@ -291,7 +274,7 @@ while date(k)<=startDate+(nYears*365.25)
 % Apply shadows
     qs=qs.*model.shadow;
 
-% Nullify high angle fluxes
+% Nullify v.high angle fluxes
     qs(j)=0;qn(j)=0;clear j
     model.qs=qs; % Record longshore flux after application of shadows
 
@@ -308,16 +291,19 @@ while date(k)<=startDate+(nYears*365.25)
         S=S(:);
 
 % Boundary Flux %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-       [TrCoeff1,Leffective1]=calcTransmission(model.L(1),XsurfNow(1),model.dn(1),model);
-        qlhb=TrCoeff1*model.qs(2);
-       [TrCoeff2,Leffective2]=calcTransmission(model.L(2),XsurfNow(end),model.dn(end),model); 
-        qrhb=TrCoeff2*model.qs(end-1);
-        model.TrCoeff=[TrCoeff1, TrCoeff2];
+    % Big change here 5/9/23 MD
+    model.L(1)=0; % Note that we set the effective length at the boundary to zero giving TrCoeff=1 
+    model.L(2)=0; % This is because the boundary conditions at domain edges are imposed only by the added structures and their shadows.
+    [TrCoeff1,Leffective1]=calcTransmission(model.L(1),XsurfNow(1),model.dn(1),model);
+    qlhb=TrCoeff1*model.qs(2);
+    [TrCoeff2,Leffective2]=calcTransmission(model.L(2),XsurfNow(end),model.dn(end),model); 
+    qrhb=TrCoeff2*model.qs(end-1);
+    model.TrCoeff=[TrCoeff1, TrCoeff2];
 % end boundary flux calc.%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 % compute normal displacemet due to LS transport
     [ns, dns_expl]=LaxWendroff(model.ns(:),abs(Qo(:)),qs(:),qlhb,qrhb,ds,dt,dc(:),F,S);
-   dns_ds=gradient(model.shadow.*ns,ds);
+    dns_ds=gradient(model.shadow.*ns,ds);
     Ptemp=Pav2;
     Ptemp=[Ptemp(1)*TrCoeff1,Ptemp,Ptemp(end)*TrCoeff2];
     dPn_ds=gradient(Ptemp,ds);
@@ -328,9 +314,12 @@ while date(k)<=startDate+(nYears*365.25)
 % Compute normal displacementdue due to cross-shore transport
     dnx=dt.*qn./(Xsurf.*dc); % Wave Power diss
 
-% Sea level rise normal diplacement / equilibrium relaxation model
-    timeConstant = (Xsurf.*dc)./(abs(Qo)./Xsurf); % [s]
-    model.dnSLR = (dt ./ timeConstant) .* ((SLR0-SLR)./tanb - model.dnSLR); 
+% Sea level rise diplacement / equilibrium relaxation model
+    Qoslr= constant.k1 .* model.k2 .* model.PoMean(:)' ./ Xsurf;
+    dnslr = model.dnSLR - (SLR ./ tanb);
+    dzslr = dnslr .* sin(atan(tanb)); 
+    Rslr = min(1, (Qoslr .*dt ./ (Xsurf.* abs(dzslr))) );
+    model.dnSLR = model.dnSLR + Rslr.* dnslr;
 
 % Kalman filter in here
 if KF(1).used==1 % do KF stuff
@@ -476,7 +465,7 @@ if j1>nCal(tm)
     end
 
     % Plot calibration points
-    plotfigureOne(model, structures, hard, date(k) )
+    plotfigureOne(model, structures, date(k) )
     figure(1)
     plot(real(calibration.MCLArray_xy(tm,:)),imag(calibration.MCLArray_xy(tm,:)),'r*');
 
@@ -560,12 +549,12 @@ end % end profile loop
 end % End Kalman Filter (if) 
 
         % Accumnulate normal displacement components
-        model.nx=model.nx+dnx + dnx_corr_all;
+        model.nx=model.nx + dnx + dnx_corr_all;
         model.ns=ns'+ dns_corr_all;
 
         model.dn = model.ns + model.nx + model.dnSLR;
-        model.x=model.x0+model.dn.*sind(model.theta0);
-        model.y=model.y0+model.dn.*cosd(model.theta0);
+        model.x=model.x0 + model.dn.*sind(model.theta0);
+        model.y=model.y0 + model.dn.*cosd(model.theta0);
         dns_corr_all=0*dns_corr_all;
         dnx_corr_all=0*dnx_corr_all;
 
@@ -574,34 +563,21 @@ end % End Kalman Filter (if)
 
 
 %% File Output Prep %%%%%%%%
-    if nextSave<=date(k)
-        x=[];
-        y=[];
-        n=[];
-        s=[];
-        for i=1:model.Nseg
-        x=[x,model.x];
-        y=[y,model.y];
-        n=[n,model.dn];
-        x=[x,NaN];
-        y=[y,NaN];
-        n=[n,NaN];
-        end
-    end
     iSave=iSave+1;
     model.date(iSave)=date(k);
-    model.xArray(:,iSave)=x;
-    model.yArray(:,iSave)=y;
-    model.nArray(:,iSave)=n;
-    jj=~isnan(x);
-    model.s=nan(size(n));
-    [model.s(jj)]=computeAlongshoreDist(x(jj),y(jj));
+    model.xArray(:,iSave)=model.x;
+    model.yArray(:,iSave)=model.y;
+    model.nArray(:,iSave)=model.dn;
+    % Added addition flux components
+    model.nsArray(:,iSave)=model.ns;
+    model.nSLRArray(:,iSave)=model.dnSLR;
+    model.nxArray(:,iSave)=model.nx;
   %%%%%%%%%%%%%%%%%%%%%%%%%%%%% 
 
     %% Plot figure 1 Data 
     if nextPlot<=date(k)
 
-    plotfigureOne(model, structures, hard, date(k) )
+    plotfigureOne(model, structures,  date(k) )
 
     % update plotStep
     nextPlot=nextPlot+model.plotStep;
@@ -643,43 +619,15 @@ end
 % Test if structures are used and then save
 calibration.title='blank structure';
 if exist('structures')
-    save(filename.output,'model','wave','shoreline','hard','structures',"calibration")
+    save(filename.output,'model','wave','shoreline','structures',"calibration")
 else
-    save(filename.output,'model','wave','shoreline','hard','calibration')
+    save(filename.output,'model','wave','shoreline','calibration')
 end
  
 return % End Program >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
 
 %%%%%%% Functions....%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-function [model]=find_segments(Xhead,Threshold,model)
-
-% Test for circular boundary
-if isfield(model,'Boundary')
-    model.Nseg=1;
-    model.SegIndex=[1,model.Ns];
-    return
-end
-
-if Xhead(1)>Threshold;Nseg=0 ;else Nseg=1; istart(1)=1;end
-ifin=[];
-
-for i=1:model.Ns-1
-    if Xhead(i) > Threshold && Xhead(i+1)<=Threshold
-        Nseg=Nseg+1;
-        istart(Nseg)=i+1;
-    end
-    if Xhead(i) <=Threshold && Xhead(i+1)>Threshold
-        ifin(Nseg)=i;
-    end
-end
-
-if length(ifin)<length(istart);ifin(Nseg)=model.Ns;end
-
-model.Nseg=Nseg;
-model.SegIndex=[istart(:),ifin(:)];
-end
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 function [model]=getBeach(shoreline,model)
@@ -697,73 +645,6 @@ end
 
 end
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-function [model,hard]=getNonMobile(shoreline,model)
-% Now find non-mobile shoreline
-k=0; 
-
-if model.Nseg==1
-    hard(1).x=shoreline.x(1:model.SegIndex(1,1));
-    hard(1).y=shoreline.y(1:model.SegIndex(1,1));
-    hard(2).x=shoreline.x(model.SegIndex(end,end):end);
-    hard(2).y=shoreline.y(model.SegIndex(end,end):end);
-    model.L(1)=shoreline.Xhead(1);
-    model.L(2)=shoreline.Xhead(end);
-    if length(hard(2).x)>1 && length(hard(1).x)>1;hard(1).Nseg=2;else hard(1).Nseg=1;end   
-return
-end
-
-
-
-if model.SegIndex(1,1)~=1 
-    istart=1;
-    ifin=model.SegIndex(1,1);
-    hard(1).x=shoreline.x(istart:ifin);
-    hard(1).y=shoreline.y(istart:ifin);
-    % define headland length scale L for lh boundary
-    model.L(1)=max(shoreline.Xhead(istart:ifin));
-    k=k+1;
-else 
-    model.L(1)=0;
-end
-
-%% Loop to do internal boundary conditions
-for iseg=1:model.Nseg-1
-
-    istart=model.SegIndex(iseg,2);
-    ifin=model.SegIndex(iseg+1,1);
-    hard(iseg+k).x=shoreline.x(istart:ifin);
-    hard(iseg+k).y=shoreline.y(istart:ifin);
-
-    % Need to compute L for internal boundaries
-    Ls=hypot(shoreline.x(istart)-shoreline.x(ifin),shoreline.y(istart)-shoreline.y(ifin));
-    a=polyarea(shoreline.x(istart:ifin),shoreline.y(istart:ifin));
-
-    if k==0
-        model(iseg).L(2)=a/Ls;
-        model(iseg+1).L(1)=a/Ls;
-    else
-        model(iseg).L(2)=a/Ls;
-        model(iseg+k).L(1)=a/Ls;
-    end
-end
-
-Ns=length(shoreline.x);
-if model.SegIndex(end,2)~=Ns 
-    istart=model.SegIndex(end,2);
-    ifin=Ns;
-    
-    hard(iseg+k+1).x=shoreline.x(istart:ifin);
-    hard(iseg+k+1).y=shoreline.y(istart:ifin);
-    % define headland length scale L for end boundary
-    model(iseg+k).L(2)=max(shoreline.Xhead(istart:ifin));
-else
-    model(iseg+1).L(2)=0;
-end
-
-    hard(1).Nseg=length(hard);
-
-end
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 function [xval,yval,ds,Ns]=initialiseShoreline(x,y,Ns,ds)
 
@@ -1351,7 +1232,7 @@ model.DOC=applyWeight(DOC,model.weights);
 model.Berm=applyWeight(R2,model.weights);
 model.dc=applyWeight(DOC+R2+model.MSR,model.weights);
 model.Xsurf=(model.dc./model.A).^(3/2);
-model.tanb=model.dc./model.Xsurf;
+model.tanb=model.DOC./((model.DOC./model.A).^(3/2)); % Recent mod 5/9/24 to use DOC in plac of dc for more accurate calc of tanb for SLR calcs
 
 end
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -1430,7 +1311,7 @@ if k>1; disp(' Done.');toc, end
 
 end
 
-function plotfigureOne(model, structures, hard, date )
+function plotfigureOne(model, structures, date )
 
     fig1 = figure(1);  
     fig1.Units = 'normalized';
@@ -1442,9 +1323,9 @@ function plotfigureOne(model, structures, hard, date )
         plot(model.x0,model.y0,'g','LineWidth',1)
     end
 
-    for i = 1:hard(1).Nseg
-          plot(hard(i).x,hard(i).y,'k','LineWidth',4)
-    end
+%     for i = 1:hard(1).Nseg
+%           plot(hard(i).x,hard(i).y,'k','LineWidth',4)
+%     end
     % Plot structures if present
     if isfield(model,'structures')
         for i = 1: structures(1).Nstruct
