@@ -220,14 +220,6 @@ while date(k)<=startDate+(nYears*365.25)
        model.shadow=ones(size(model.x));
        shadow=ones(size(model.x));
 
-      % Shadows from hard segments (replaced by structures now) - May be delete? 
-    if shadowSwitch==1 && hard(1).Nseg>1
-    %[model.shadow]=lookupShadow(model,Dir,i);
-    [ xS,yS,shadow] = ...
-        find_shadows(model.x,model.y,model.x_hard,model.y_hard,deg2rad(mode(model.DirAbs)),1 );
-    model.shadow=interp1(1:length(shadow)-0,double(~shadow),1:model.Ns,'nearest','extrap');
-    end
-
     
     % Now do the structures
     if isfield(model,'structures')
@@ -318,7 +310,7 @@ while date(k)<=startDate+(nYears*365.25)
     Qoslr= constant.k1 .* model.k2 .* model.PoMean(:)' ./ Xsurf;
     dnslr = model.dnSLR - (SLR ./ tanb);
     dzslr = dnslr .* sin(atan(tanb)); 
-    Rslr = min(1, (Qoslr .*dt ./ (Xsurf.* abs(dzslr))) );
+    Rslr = min(1, abs((Qoslr .*dt ./ (Xsurf.* abs(dzslr)))) );
     model.dnSLR = model.dnSLR + Rslr.* dnslr;
 
 % Kalman filter in here
@@ -470,9 +462,9 @@ if j1>nCal(tm)
     plot(real(calibration.MCLArray_xy(tm,:)),imag(calibration.MCLArray_xy(tm,:)),'r*');
 
     % Plot State parameters
-            fig4 = figure(4);  
-            fig4.Units = 'normalized';
-            fig4.OuterPosition = [0 0 0.4 1]; % left bottom width height
+            fig3 = figure(3);  
+            fig3.Units = 'normalized';
+            fig3.OuterPosition = [0 0 0.4 1]; % left bottom width height
             conf_level = 0.95; % Set your confidence level
             conf_factor = norminv((1 + conf_level) / 2);
 
