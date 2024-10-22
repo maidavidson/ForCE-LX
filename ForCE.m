@@ -17,7 +17,6 @@
         end
     end
 
-
 %% (semi) - Impicit or explicit schemes
     if isfield(model,'F')
         F=model.F;
@@ -222,7 +221,7 @@ while date(k)<=startDate+(nYears*365.25)
 
     
     % Now do the structures
-    if isfield(model,'structures')
+    if isfield(filename,'structures')
         for in= 1: structures(1).Nstruct
         % Find nearest shoreline point to structure
         distVal=hypot(structures(in).xo-model.x,structures(in).yo-model.y);
@@ -270,7 +269,7 @@ while date(k)<=startDate+(nYears*365.25)
     qs(j)=0;qn(j)=0;clear j
     model.qs=qs; % Record longshore flux after application of shadows
 
-% Source Fuction definition (Accounts for coastine curvature in implicit scheme)    
+% Source fuction definition (Accounts for coastine curvature in implicit scheme)    
     S=zeros(size(qs));
     D=Qo*dt./(dc.*ds.^2); % Diffusson coeff.
         for is=2:model.Ns-1 
@@ -284,8 +283,13 @@ while date(k)<=startDate+(nYears*365.25)
 
 % Boundary Flux %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
     % Big change here 5/9/23 MD
-    model.L(1)=0; % Note that we set the effective length at the boundary to zero giving TrCoeff=1 
-    model.L(2)=0; % This is because the boundary conditions at domain edges are imposed only by the added structures and their shadows.
+    % Model.L can be specified in setup filed for the ends of the model
+    % domain otherwise the boundaries are open at both ends. Defining
+    % structures with shadows at the end of teh domain also works.
+    if ~isfield(model,'L')
+        model.L(1)=0; % Note that we set the effective length at the boundary to zero giving TrCoeff=1 
+        model.L(2)=0; % This is because the boundary conditions at domain edges are imposed only by the added structures and their shadows.
+    end
     [TrCoeff1,Leffective1]=calcTransmission(model.L(1),XsurfNow(1),model.dn(1),model);
     qlhb=TrCoeff1*model.qs(2);
     [TrCoeff2,Leffective2]=calcTransmission(model.L(2),XsurfNow(end),model.dn(end),model); 
@@ -298,17 +302,17 @@ while date(k)<=startDate+(nYears*365.25)
     dns_ds=gradient(model.shadow.*ns,ds);
     Ptemp=Pav2;
     Ptemp=[Ptemp(1)*TrCoeff1,Ptemp,Ptemp(end)*TrCoeff2];
-    dPn_ds=gradient(Ptemp,ds);
+    dPn_ds=-gradient(Ptemp,ds);
     clear Ptemp
     dPn_ds(1)=[];
     dPn_ds(end)=[];
-   
+    
 % Compute normal displacementdue due to cross-shore transport
     dnx=dt.*qn./(Xsurf.*dc); % Wave Power diss
 
 % Sea level rise diplacement / equilibrium relaxation model
     Qoslr= constant.k1 .* model.k2 .* model.PoMean(:)' ./ Xsurf;
-    dnslr = model.dnSLR - (SLR ./ tanb);
+    dnslr =  -(SLR ./ tanb) - model.dnSLR;
     dzslr = dnslr .* sin(atan(tanb)); 
     Rslr = min(1, abs((Qoslr .*dt ./ (Xsurf.* abs(dzslr)))) );
     model.dnSLR = model.dnSLR + Rslr.* dnslr;
@@ -394,7 +398,7 @@ end
     dns_corr(j1)=State(2,k)-State_old(2);
     index_corr(j1)=iProf;
     k1(j1)=State(3,k);
-    k2(j1)=State(4,k);
+    k2(j1)=k1(j1);%State(4,k);
     a1(j1)=State(5,k);
     a2(j1)=State(6,k); 
     b1(j1)=State(7,k);
@@ -446,7 +450,7 @@ if j1>nCal(tm)
         disp(['model.a2 = ', num2str(model.a2)])
         disp(['model.b1 = ', num2str(model.b1)])
         disp(['model.b2 = ', num2str(model.b2)])
-        disp(['model error = ', num2str(nanmean(Rn)),' [m]'])
+        disp(['model error = ', num2str(nanmean(abs(Rn))),' [m]'])
         disp(['Next model update = ',datestr(KF(1).trigger)])
         disp('.....................')
         Rn=[];
@@ -457,7 +461,14 @@ if j1>nCal(tm)
     end
 
     % Plot calibration points
-    plotfigureOne(model, structures, date(k) )
+    %plotfigureOne(model, structures, date(k) )
+
+     if isfield(filename,'structures')
+            plotfigureOne(model, structures,  date(k) )
+         else
+            plotfigureOne(model,[],date(k) )
+         end
+
     figure(1)
     plot(real(calibration.MCLArray_xy(tm,:)),imag(calibration.MCLArray_xy(tm,:)),'r*');
 
@@ -568,9 +579,11 @@ end % End Kalman Filter (if)
 
     %% Plot figure 1 Data 
     if nextPlot<=date(k)
-
-    plotfigureOne(model, structures,  date(k) )
-
+         if isfield(filename,'structures')
+            plotfigureOne(model, structures,  date(k) )
+         else
+            plotfigureOne(model,[],date(k) )
+         end
     % update plotStep
     nextPlot=nextPlot+model.plotStep;
 
@@ -610,7 +623,7 @@ end
 
 % Test if structures are used and then save
 calibration.title='blank structure';
-if exist('structures')
+if isfield(filename,'structures')
     save(filename.output,'model','wave','shoreline','structures',"calibration")
 else
     save(filename.output,'model','wave','shoreline','calibration')
@@ -1319,7 +1332,7 @@ function plotfigureOne(model, structures, date )
 %           plot(hard(i).x,hard(i).y,'k','LineWidth',4)
 %     end
     % Plot structures if present
-    if isfield(model,'structures')
+    if isstruct(structures)
         for i = 1: structures(1).Nstruct
             plot(structures(i).x,structures(i).y,'b',LineWidth=4)
         end
