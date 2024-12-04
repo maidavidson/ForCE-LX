@@ -21,7 +21,7 @@
     if isfield(model,'F')
         F=model.F;
     else
-        F=0.1; % Default Crank-Nicholson, Lax-Wendroff scheme
+        F=0.5; % Default Crank-Nicholson, Lax-Wendroff scheme
     end
 
 %% Initial sea level
@@ -74,7 +74,13 @@
     [model]=computeAverageValues(wave,model);
 
 % Compute average power components
-    [model]=computeAveragePowerComponents(wave,model,wave(1).dates);
+    if ~isfield(model,'L')
+        model.L(1)=0; % Note that we set the effective length at the boundary to zero giving TrCoeff=1 
+        model.L(2)=0; % This is because the boundary conditions at domain edges are imposed only by the added structures and their shadows.
+    end
+    
+     [model]=computeAveragePowerComponents(wave,model,wave(1).dates);
+
     DirArray=model.DirMean;
     Paverage=mean(model.PoMean);
     QoAv=constant.k1*Paverage;
@@ -88,7 +94,8 @@
     Xsurf=model.Xsurf;
     dc=model.dc;
     tanb=model.tanb;
-    Dbar=mean(model.Pav./Xsurf);
+    %Dbar=mean(model.Pav./Xsurf);
+    Dbar=model.Pav./Xsurf;
 
 % Initialise fluxes    
     model.qs=zeros(size(model.x));
@@ -112,15 +119,15 @@
         disp('Calibration file loaded')
         KF(1).R=(KF(1).Noise*ones(1,calibration.nProfiles)).^2; % Noise Matrix
         State=zeros(nState,Nval);
-        State(:,1)=[0, 0, model.k1, model.k2, model.a1 model.a2 model.b1 model.b2]'    ;   % State Matrix
+        State(:,1)=[0, 0, model.k1, model.a1,  model.b2]'    ;   % State Matrix
         P=KF(1).P;
         KF(1).timeMeasurements=calibration.allDates;
         tm=find(calibration.allDates>=model.startDate,1,"first");
+        tm1=tm;
         KF(1).trigger=calibration.allDates(tm);
        
 
  % Define J and P for all locations
-        colourFix=[rand(nProfiles,1),rand(nProfiles,1),rand(nProfiles,1)];
         for j=1:nProfiles
             KF(j).Flag=0;
             KF(j).P=P;
@@ -146,11 +153,15 @@
         end
 
 % initialise parameters for state param plot - below initialise model date
-        nStatePlot=nState-2;
-        evolve_upLim = zeros(nStatePlot, 1);
-        evolve_lowLim = zeros(nStatePlot, 1);
-        evolve_date=zeros(1,1);
-        stateName={'XS','LS','k_1','k_2','a_1','a_2','b_1','b_2'};  
+        nStatePlot=nState-1;
+        stateLim= zeros(nState,calibration.nDates);
+        upLim = zeros(nState,calibration.nDates);
+        lowLim = zeros(nState,calibration.nDates);
+        datelim=zeros(1,calibration.nDates);
+        shorelineCI=zeros(1,calibration.nDates);
+        stateName={'XS','\Delta n','k','a_1','b_2'};  
+        conf_level = 0.95; % Set your confidence level
+        conf_factor = 1;%norminv((1 + conf_level) / 2);
 
         for j=1:nSurveys
             jj=find(~isnan(calibration.MCLArray(j,:)));
@@ -205,14 +216,17 @@ while date(k)<=startDate+(nYears*365.25)
 
 % Compute average power components
     [model]=computeAveragePowerComponents(wave,model,date(k));
+
+
     DirArray=model.DirMean;
     Paverage=mean(model.PoMean);
     QoAv=constant.k1*Paverage;
     Pn=model.PnMean;
     Ps=model.PsMean;
     Po=model.PoMean;
-    XsurfNow=model.Xsurf; % gets the instantaneous surfzone width at the current time-step (used for tansmission calcs)
-   % dc=model.dc; % Commented to keep constant in time
+    dcNow=2.52*model.HoMean+model.MSR;
+    XsurfNow=(dcNow./model.A).^(3/2);% gets the instantaneous surfzone width at the current time-step (used for transmission calcs)
+   % dc=dcNow; % Commented to keep constant in time
 
 % Compute shadows on the basis of the non-shoaled wave direction
     % Initialise arays
@@ -249,6 +263,10 @@ while date(k)<=startDate+(nYears*365.25)
     if i==1;dns_ds=zeros(size(model.ns));end
 
     model.Pavs=model.a2.*Dbar.*model.ns + model.b2.*Pav2;
+     % update Pav2
+     if isfield(model,'Ts')
+     [Pav1]=runningMean(model.Ts,Pav2,Ps);
+     end
 
     qs = constant.k1.*model.k2.* (Ps-model.Pavs);
     Qo = 0.5*constant.k1.*model.k2.* model.PoMean(:)';
@@ -258,7 +276,11 @@ while date(k)<=startDate+(nYears*365.25)
 % optimsed for a nd b later
      model.Pavn=model.a1.*Dbar.*model.nx + model.b1.*Pav1;
      Diss=(model.Pavn-Pn);
-     
+
+     % update Pav1
+     if isfield(model,'Tn')
+     [Pav1]=runningMean(model.Tn,Pav1,Pn);
+     end
 % Compute cross-shore sediment flux
     qn = constant.k1.*model.k1.*Diss;
 
@@ -283,13 +305,10 @@ while date(k)<=startDate+(nYears*365.25)
 
 % Boundary Flux %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
     % Big change here 5/9/23 MD
-    % Model.L can be specified in setup filed for the ends of the model
+    % Model.L can be specified in setup file for the ends of the model
     % domain otherwise the boundaries are open at both ends. Defining
-    % structures with shadows at the end of teh domain also works.
-    if ~isfield(model,'L')
-        model.L(1)=0; % Note that we set the effective length at the boundary to zero giving TrCoeff=1 
-        model.L(2)=0; % This is because the boundary conditions at domain edges are imposed only by the added structures and their shadows.
-    end
+    % structures with shadows at the end of the domain also works.
+
     [TrCoeff1,Leffective1]=calcTransmission(model.L(1),XsurfNow(1),model.dn(1),model);
     qlhb=TrCoeff1*model.qs(2);
     [TrCoeff2,Leffective2]=calcTransmission(model.L(2),XsurfNow(end),model.dn(end),model); 
@@ -299,22 +318,31 @@ while date(k)<=startDate+(nYears*365.25)
 
 % compute normal displacemet due to LS transport
     [ns, dns_expl]=LaxWendroff(model.ns(:),abs(Qo(:)),qs(:),qlhb,qrhb,ds,dt,dc(:),F,S);
-    dns_ds=gradient(model.shadow.*ns,ds);
-    Ptemp=Pav2;
-    Ptemp=[Ptemp(1)*TrCoeff1,Ptemp,Ptemp(end)*TrCoeff2];
+
+    % Compute gradient terms for Jacobian matrix
+    Ptemp=Pav2;Ptemp=(model.shadow(:).*Ptemp(:))';
+    Ptemp=[Ptemp(2)*TrCoeff1,Ptemp,Ptemp(end-1)*TrCoeff2];
     dPn_ds=-gradient(Ptemp,ds);
     clear Ptemp
     dPn_ds(1)=[];
     dPn_ds(end)=[];
-    
+
+%   Now longshore flux gradient
+    Ptemp=Ps;Ptemp=(model.shadow(:).*Ptemp(:))';
+    Ptemp=[Ptemp(2)*TrCoeff1,Ptemp,Ptemp(end-1)*TrCoeff2];
+    dPs_ds=-gradient(Ptemp,ds);
+    clear Ptemp
+    dPs_ds(1)=[];
+    dPs_ds(end)=[];
+   
 % Compute normal displacementdue due to cross-shore transport
-    dnx=dt.*qn./(Xsurf.*dc); % Wave Power diss
+    dnx=dt.*qn./(Xsurf.*dc); 
 
 % Sea level rise diplacement / equilibrium relaxation model
-    Qoslr= constant.k1 .* model.k2 .* model.PoMean(:)' ./ Xsurf;
+    Qoslr= constant.k1 .* model.k2 .* model.PoMean(:)' ./ XsurfNow;
     dnslr =  -(SLR ./ tanb) - model.dnSLR;
     dzslr = dnslr .* sin(atan(tanb)); 
-    Rslr = min(1, abs((Qoslr .*dt ./ (Xsurf.* abs(dzslr)))) );
+    Rslr = min(1, abs((Qoslr .*dt ./ (XsurfNow.* abs(dzslr)))) );
     model.dnSLR = model.dnSLR + Rslr.* dnslr;
 
 % Kalman filter in here
@@ -327,19 +355,22 @@ for ikf=1:calibration.nProfiles
     % 1. State (NB evolutioon ofState is not correct for terms 1-2
     State1=model.nx(iProf)+dnx(iProf);
     State2=ns(iProf);
-    State(:,k)=[State1 State2 model.k1 model.k2 model.a1 model.a2 model.b1 model.b2]';
+    State(:,k)=[State1 State2 model.k1  model.a1  model.b2]';
 
     % 2. Jacobian Matrix
     C=constant.k1/dc(iProf);
-    J = ...
-            [1 + C*State(3,k)*State(5,k)*Dbar*dt/Xsurf(iProf), 0, -C*dt*(Pn(iProf)-State(5,k)*Dbar*State1-model.b1.*Pav1(iProf))/Xsurf(iProf) , 0, C*State(3,k)*dt*Dbar*State1/Xsurf(iProf), 0, State(3,k)*C*dt*Pav1(iProf)/Xsurf(iProf), 0;...
-             0, 1-C*model.shadow(iProf)*State(4,k)*State(6,k)*Dbar*dt/ds, 0, dns_expl(iProf)./State(4,k), 0, -model.shadow(iProf)*State(4,k)*C*dt*Dbar*dns_ds(iProf), 0, -model.shadow(iProf)*C*State(4,k)*dt*dPn_ds(iProf);...
-             0, 0, 1, 0, 0, 0, 0, 0;...
-             0, 0, 0, 1, 0, 0, 0, 0;...
-             0, 0, 0, 0, 1, 0, 0, 0;...
-             0, 0, 0, 0 ,0, 1, 0, 0;...
-             0, 0, 0, 0 ,0, 0, 1, 0;...
-             0, 0, 0, 0 ,0, 0, 0, 1];  
+%     J = ...
+%             [1 + C*State(3,k)*State(4,k)*Dbar(iProf)*dt/Xsurf(iProf), 0, -C*dt*(Pn(iProf)-State(4,k)*Dbar(iProf)*State1-model.b1.*Pav1(iProf))/Xsurf(iProf) , C*State(3,k)*dt*Dbar(iProf)*State1/Xsurf(iProf), 0;...
+%              0, 1, dns_expl(iProf)./State(3,k), 0,  -C*State(3,k)*dt*dPn_ds(iProf);...
+%              0, 0, 1, 0, 0;...
+%              0, 0, 0, 1, 0;...
+%              0, 0, 0, 0, 1];
+     J = ...
+            [1 + C*State(3,k)*State(4,k)*Dbar(iProf)*dt/Xsurf(iProf), 0, -C*dt*(Pn(iProf)-State(4,k)*Dbar(iProf)*State1-model.b1.*Pav1(iProf))/Xsurf(iProf) , C*State(3,k)*dt*Dbar(iProf)*State1/Xsurf(iProf), 0;...
+             0, 1, C*dt*dPs_ds(iProf), 0,  -C*model.k2*dt*dPn_ds(iProf);...
+             0, 0, 1, 0, 0;...
+             0, 0, 0, 1, 0;...
+             0, 0, 0, 0, 1];           
  
         KF(ikf).J=J;
 
@@ -347,8 +378,9 @@ for ikf=1:calibration.nProfiles
         KF(ikf).P= KF(ikf).J * KF(ikf).P * KF(ikf).J' + KF(1).Q;
  
         profileNow=profileIndex{tm}(j1);
- 
- if date(k)>=KF(1).trigger && tm+1 < nSurveys && ikf==profileNow && date(k)>KF(1).startDate && date(k)<KF(1).endDate   
+
+%% This is the trigger for updates... 
+if date(k)>=KF(1).trigger && tm+1 < nSurveys && ikf==profileNow && date(k)>KF(1).startDate && date(k)<KF(1).endDate &&  model.shadow(iProf)~=0
 
 % record old state before adjustment
     State_old=State(:,k);
@@ -388,32 +420,27 @@ end
     State(3,k)=min(max(State(3,k),KF(1).limits(3,1)),KF(1).limits(3,2));
     State(4,k)=min(max(State(4,k),KF(1).limits(4,1)),KF(1).limits(4,2));
     State(5,k)=min(max(State(5,k),KF(1).limits(5,1)),KF(1).limits(5,2));
-    State(6,k)=min(max(State(6,k),KF(1).limits(6,1)),KF(1).limits(6,2));
-    State(7,k)=min(max(State(7,k),KF(1).limits(7,1)),KF(1).limits(7,2));
-    State(8,k)=min(max(State(8,k),KF(1).limits(8,1)),KF(1).limits(8,2));
  end
 
      % 7. unpack state matrix
     dnx_corr(j1)=State(1,k)-State_old(1);
     dns_corr(j1)=State(2,k)-State_old(2);
-    index_corr(j1)=iProf;
+    index_corr(j1)=iProf;    
     k1(j1)=State(3,k);
-    k2(j1)=k1(j1);%State(4,k);
-    a1(j1)=State(5,k);
-    a2(j1)=State(6,k); 
-    b1(j1)=State(7,k);
-    b2(j1)=State(8,k); 
+    a1(j1)=State(4,k);
+    b2(j1)=State(5,k); 
+    w(j1)=sum(~isnan(abs(calibration.MCLArray_xy(tm1:tm,ikf))));
 
     if KF(ikf).Flag==0 || model.shadow(iProf)==0 % Check for shadows or data point too far away from shoreline
     % Reject point
         dnx_corr(j1)=0;
         dns_corr(j1)=0;
         k1(j1)=NaN;
-        k2(j1)=NaN;
         a1(j1)=NaN;
-        a2(j1)=NaN; 
-        b1(j1)=NaN;
         b2(j1)=NaN; 
+        w(j1)=0;
+        Rn(j1)=NaN;
+
     end % end if for missing out data
 
     j1=j1+1;
@@ -421,9 +448,9 @@ end
 
 % Update time of next measurement
 if j1>nCal(tm)
+    
     j1=1; % Counter for each data point used (j1) % Emily edit
-    tm=tm+1;
-    KF(1).trigger=KF(1).timeMeasurements(tm);
+
     
 
     % Unpack model corrections for the longshore and cross-shore models and
@@ -431,14 +458,19 @@ if j1>nCal(tm)
     if exist('dnx_corr')
         dns_corr_all=interp1(index_corr,dns_corr,1:model.Ns,'nearest','extrap');
         dnx_corr_all=interp1(index_corr,dnx_corr,1:model.Ns,'nearest','extrap');
-        dns_corr_all=smooth(dns_corr_all,3)';
-        dnx_corr_all=smooth(dnx_corr_all,3)';
-        model.k1=nanmean(k1);
-        model.k2=nanmean(k2);
-        model.a1=nanmean(a1);
-        model.a2=nanmean(a2);
-        model.b1=nanmean(b1);
-        model.b2=nanmean(b2);
+        dns_corr_all=smooth(dns_corr_all,5)';
+        dnx_corr_all=smooth(dnx_corr_all,5)';
+        model.k1=nansum(w.*k1)./sum(w);%nanmean(k1);
+       if isfield(model,'hyp')
+        model.k2=-model.k1;
+       else
+        model.k2=model.k1;
+       end
+        model.a1=nansum(w.*a1)./sum(w);%nanmean(a1);
+        model.b2=nansum(w.*b2)./sum(w);%nanmean(b2);
+        
+        
+        clear w
 
         % Display updated values
         clc
@@ -453,15 +485,13 @@ if j1>nCal(tm)
         disp(['model error = ', num2str(nanmean(abs(Rn))),' [m]'])
         disp(['Next model update = ',datestr(KF(1).trigger)])
         disp('.....................')
-        Rn=[];
+        
         clear dnx_corr dns_corr index_corr a1 a2 k1 k2 b1 b2
     else
          dns_corr_all=0*dns_corr_all;
          dnx_corr_all=0*dnx_corr_all;
     end
 
-    % Plot calibration points
-    %plotfigureOne(model, structures, date(k) )
 
      if isfield(filename,'structures')
             plotfigureOne(model, structures,  date(k) )
@@ -472,57 +502,56 @@ if j1>nCal(tm)
     figure(1)
     plot(real(calibration.MCLArray_xy(tm,:)),imag(calibration.MCLArray_xy(tm,:)),'r*');
 
-    % Plot State parameters
-            fig3 = figure(3);  
-            fig3.Units = 'normalized';
-            fig3.OuterPosition = [0 0 0.4 1]; % left bottom width height
-            conf_level = 0.95; % Set your confidence level
-            conf_factor = norminv((1 + conf_level) / 2);
 
+    % Plot State parameters
+            fig2 = figure(2);  
+            fig2.Units = 'normalized';
+            fig2.OuterPosition = [0 0 0.4 1]; % left bottom width height
             clf
 
-            upLim = zeros(calibration.nProfiles, length(model.date));
-            lowLim = zeros(calibration.nProfiles, length(model.date));
+            % Compute weights for weighted average based on the number of
+            % uses of a particular profile (more used = more weight)
+            w2=sum(~isnan(abs(calibration.MCLArray_xy(tm1:tm,:))),1);
 
-            for l = 1:nStatePlot   % state parameter
-                state_values = State(l + 2, 2:length(model.date) + 1);
                 for it = 1:calibration.nProfiles
                     % Calculate confidence limits for the current iteration
                     P_matrix = KF(it).P;
-                    P_diag = sqrt(abs(diag(P_matrix))); % Extract diagonal elements and take square root
-                    upLim(it, :) = state_values + conf_factor * P_diag(l+2);
-                    lowLim(it, :) = state_values - conf_factor * P_diag(l+2);
+                    P_diag(:,it) = sqrt(abs(diag(P_matrix))); % Extract diagonal elements and take square root
                 end
-
-                % Calculate average confidence limits over profiles
-                avg_upLim = mean(upLim, 1);
-                avg_lowLim = mean(lowLim, 1);
-
-                avg_upLim2(l,:) = avg_upLim(end);
-                avg_lowLim2(l,:) = avg_lowLim(end);
-            end
-
-            evolve_upLim = [evolve_upLim avg_upLim2];
-            evolve_lowLim = [evolve_lowLim avg_lowLim2];
-            evolve_date = [evolve_date model.date(end)];
+                % Weighted average
+                 Pw=P_diag*w2'/sum(w2);
+                 % Compute state+upper and lower conf. int.
+                 upLim(:,tm) = State(:,k) + conf_factor * Pw;
+                 stateLim(:,tm)=State(:,k);
+                 lowLim(:,tm) = State(:,k) - conf_factor * Pw;
+                 datelim(tm)=calibration.allDates(tm);
+                 datelim=datelim(:)';
+                 upLim(2,tm)=hypot(conf_factor * Pw(1),conf_factor * Pw(2));
+                 lowLim(2,tm) =0;
+                 stateLim(2,tm)=upLim(2,tm);%nanmean(abs(Rn));Rn=[];
 
             for l = 1:nStatePlot   % state parameter
                 subplot(nStatePlot, 1, l); % final digit = lowercase L not #1
-                state_values = State(l + 2, 2:length(model.date) + 1);
+                state_values = State(l + 1, 2:length(model.date) + 1);
 
 
-                plot(model.date, state_values, 'r','linewidth', 3);
+                plot(datelim(tm1:tm), stateLim(l+1,tm1:tm), 'r','linewidth', 3);
                 hold on;
 
                 % Plot evolving average confidence limits
-                fill([evolve_date(2:end), fliplr(evolve_date(2:end))], [evolve_upLim(l,2:end), fliplr(evolve_lowLim(l,2:end))], 'red', 'FaceAlpha', 0.3);
+                fill([datelim(tm1:tm), fliplr(datelim(tm1:tm))], [upLim(l+1,tm1:tm), fliplr(lowLim(l+1,tm1:tm))], 'red', 'FaceAlpha', 0.3);
 
-                ylabel(stateName(l + 2));
+                if l+1==2
+                    yline(sqrt(KF(1).R),'LineWidth',3,LineStyle=':')
+                    legend('Model Conf. Int. [m]','','Data Conf. Int. [m]','Location','best')
+                end
+
+                ylabel(stateName(l + 1));
                 if l == nStatePlot
                     datetick;
                     xlabel('Date');
-                     grid on;
-            set(gca, 'FontSize', 16, 'Linewidth', 2);
+                    grid on;
+                    set(gca, 'FontSize', 16, 'Linewidth', 2);
 
                 else
                     datetick;
@@ -532,7 +561,9 @@ if j1>nCal(tm)
 
                 end
             end
-
+    % Update tm and trigger
+    tm=tm+1;
+    KF(1).trigger=KF(1).timeMeasurements(tm);
 end
 
 
@@ -541,19 +572,18 @@ end
 end % end if
 
 end % end profile loop
- 
         State(3,k)=model.k1;
-        State(4,k)=model.k2;
-        State(5,k)=model.a1;
-        State(6,k)=model.a2;
-        State(7,k)=model.b1;
-        State(8,k)=model.b2;
+        State(4,k)=model.a1;
+        State(5,k)=model.b2;
+      
 
 end % End Kalman Filter (if) 
 
         % Accumnulate normal displacement components
         model.nx=model.nx + dnx + dnx_corr_all;
         model.ns=ns'+ dns_corr_all;
+%         model.x0=model.x0 + (dnx_corr_all+dns_corr_all).*sind(model.theta0);
+%         model.y0=model.y0 + (dnx_corr_all+dns_corr_all).*cosd(model.theta0);
 
         model.dn = model.ns + model.nx + model.dnSLR;
         model.x=model.x0 + model.dn.*sind(model.theta0);
@@ -597,8 +627,11 @@ end % end time loop %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% Plot summary output
     for jj=2:length(model.s)-1; if isnan(model.s(jj));model.s(jj)=(model.s(jj-1)+model.s(jj+1))/2;end;end
     if isnan(model.s(end));model.s(end)=model.s(end-1)+model.ds;end
-    figure(2)  
-    contourf(model.date,-model.s,model.nArray)
+
+    figure(3)  
+    jj=find(model.shadow<0.999 & model.shadow~=0.9);
+    nArray=model.nArray;nArray(jj,:)=NaN;
+    contourf(model.date,model.s,nArray)
     datetick
     colorbar
     colormap(parula)
@@ -608,7 +641,7 @@ end % end time loop %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
     xlabel('Time')
     ylabel('Alongshore Distance [m]')
     box on
-    set(gca,'LineWidth',3,'FontSize',24)
+    set(gca,'LineWidth',4,'FontSize',24)
 
     
 % Save final output data
@@ -1219,7 +1252,7 @@ end
  end
  
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
- function [model]=computeAverageValues(wave,model)
+ function [model]=computeAverageValues(wave,model,dates)
 % Function to compute depth of closure (dc), surfzone width (Xsurf) and
 % average slope (tanb) for all longshore points given local wave data in
 % wave structure.
@@ -1236,8 +1269,8 @@ end
 model.DOC=applyWeight(DOC,model.weights);
 model.Berm=applyWeight(R2,model.weights);
 model.dc=applyWeight(DOC+R2+model.MSR,model.weights);
-model.Xsurf=(model.dc./model.A).^(3/2);
 model.tanb=model.DOC./((model.DOC./model.A).^(3/2)); % Recent mod 5/9/24 to use DOC in plac of dc for more accurate calc of tanb for SLR calcs
+model.Xsurf=(model.dc./model.A).^(3/2);
 
 end
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -1254,11 +1287,13 @@ else
     newdate=dates(1);
 end
 %% Number of points to be averaged
-Ntime=round(min(length(newdate),365.25*5/wave(1).dt));
-Ntime=max(1,Ntime);
+Ntime=length(newdate);
+maxVal=round(5*365);
+Ntime=min(Ntime,maxVal);
 
 %% Initialise arrays
 HsArray=zeros(length(model.x0),Ntime);DirArray=HsArray;DirArrayAbs=DirArray;Po=HsArray;P=Po;Pn=Po;Ps=Po;DirbArray=DirArray;Hb=Po;hb=Po;
+%HoArray=Po;dPn_dsArray=Po;
 
 % Interpolate waves data for each gauge (ig)
 for k=1:Ntime
@@ -1272,8 +1307,8 @@ end
 
 [HsArray(:,k)]=applyWeight(HsG,model.weights);
 [DirArrayAbs(:,k)]=applyWeight(DirG,model.weights);
-[Ho]=HoLinear(HsArray(:,k),Tp(k),wave(1).depth,inf);
-[Hb(:,k)]=HbKomar(Ho,Tp(k));
+[HoArray(:,k)]=HoLinear(HsArray(:,k),Tp(k),wave(1).depth,inf);
+[Hb(:,k)]=HbKomar(HoArray(:,k),Tp(k));
 hb(:,k)=Hb(:,k)./0.78;
 
 % Define spatial arrays of wave parameters along the coastal segment
@@ -1303,6 +1338,7 @@ Pn(:,k)=Po(:,k).*cosd(DirbArray(:,k));
 
 end
 
+model.HoMean=sum(HoArray,2)/Ntime;model.HoMean=model.HoMean';
 model.PMean=sum(P,2)/Ntime;model.PsMean=model.PMean';
 model.PsMean=sum(Ps,2)/Ntime;model.PsMean=model.PsMean';
 model.PnMean=sum(Pn,2)/Ntime;model.PnMean=model.PnMean';
@@ -1312,10 +1348,43 @@ model.HbMean=sum(Hb,2)/Ntime;model.HbMean=model.HbMean';
 model.hbMean=sum(hb,2)/Ntime;model.hbMean=model.hbMean';
 model.DirAbs=sum(DirArrayAbs,2)/Ntime;model.DirAbs=model.DirAbs';
 
+
+% Now compute gradient terms...
+
+% compute longshore gradient in time-averaged LST
+% [n,m]=size(Po);
+% for i=1:m
+% 
+%     % Compute shadows on the basis of the non-shoaled wave direction
+%     % Initialise arays
+%        model.shadow=ones(size(model.x));
+% 
+%     % Compute dc and surfzone width
+%     dc=2.53*HoArray(:,i)+model.MSR;
+%     XsurfNow= (dc./model.A).^(3/2);
+% 
+%     % Compute transmission coeff
+%     [TrCoeff1,~]=calcTransmission(model.L(1),XsurfNow(1),0,model);
+%     [TrCoeff2,~]=calcTransmission(model.L(2),XsurfNow(end),0,model);
+% 
+%     % Compute mean gradient
+%     Ptemp=Po(:,i);Ptemp=Ptemp(:)';
+%     Ptemp=[Ptemp(2)*TrCoeff1,Ptemp,Ptemp(end-1)*TrCoeff2];
+%     dPn_ds=gradient(Ptemp,model.dsMod);
+%     clear Ptemp
+%     dPn_ds(1)=[];
+%     dPn_ds(end)=[];
+%     dPn_dsArray(:,i)=dPn_ds';
+% end
+% 
+% model.dPn_ds=sum(dPn_dsArray,2)/Ntime;;model.dPn_ds=model.dPn_ds';
+
 if k>1; disp(' Done.');toc, end
 
-end
 
+
+end
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 function plotfigureOne(model, structures, date )
 
     fig1 = figure(1);  
@@ -1351,3 +1420,4 @@ function plotfigureOne(model, structures, date )
 
 end
 
+%%%%%%
