@@ -10,11 +10,11 @@ This said further support is planned for the future and this site will be update
 
 The RunForce.m program initiates the model run. RunForce.m allows the user to open setup files that are located in any of the following locations:	
 
-Projects/Perrnporth/inputData/setupPerranporth.m	
+Projects/Perrnporth/inputData/setupPerranporth_LX.m	
 
-Projects/Analytical/inputData/setupConstantWaveTest_LS.m	
+Projects/Breakwaters/inputData/setupConstantWaveTest_LS.m	
 
-Projects/Analytical/inputData/setupVariableWaveTest_LSXS.m	
+Projects/LogSpiralExample/inputData/SetupLXa1_0_b2_0.m	
 
 Having loaded the setup file, which contains all the user input variables including the names of the data files used to initialise the model, RunForCE.m then runs the model code ForCE.m. 	
 Note that the setup file can be opened and edited by the user to change the model parameters.	
